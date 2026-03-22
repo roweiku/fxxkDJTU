@@ -3,7 +3,7 @@ import { Form, Viewer, Designer } from '@pdfme/ui';
 import { generate } from '@pdfme/generator';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
-import { openPath } from '@tauri-apps/plugin-opener';
+// import { openPath } from '@tauri-apps/plugin-opener';
 import { getPlugins } from './plugins';
 
 export function fromKebabCase(str: string): string {
