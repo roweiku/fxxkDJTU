@@ -90,7 +90,7 @@ fn extract_taobao_order(ocr_results: &[OcrResult]) -> TransactionInfo {
 
 
         // 提取实付款金额（金额可能与"实付款"在同一文本，也可能在下一个文本框）
-        if text.contains("实付款") {
+        if text.contains("实付款") || text.contains("合计") {
             info.amount = extract_amount_taobao(text).or_else(|| {
                 find_next_text(ocr_results, index)
                     .and_then(|r| extract_standalone_amount(&r.text))
@@ -140,7 +140,7 @@ fn extract_alipay_bill(ocr_results: &[OcrResult]) -> TransactionInfo {
         let text = &result.text;
 
         // 提取米
-        if text.contains("交易成功") {
+        if text.contains("交易成功") || text.contains("支付成功") {
             info.amount = find_prev_text(ocr_results, index)
                 .and_then(|r| extract_amount_alipay(&r.text));
         }
