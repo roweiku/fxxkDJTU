@@ -1,0 +1,41 @@
+import {
+  multiVariableText,
+  text,
+  barcodes,
+  image,
+  svg,
+  line,
+  table,
+  rectangle,
+  ellipse,
+  dateTime,
+  date,
+  time,
+  select,
+  checkbox,
+  radioGroup,
+  embeddedPdfPage,
+} from '@pdfme/schemas';
+
+export const getPlugins = () => {
+  return {
+    Text: text,
+    'Multi-Variable Text': multiVariableText,
+    Table: table,
+    Line: line,
+    Rectangle: rectangle,
+    Ellipse: ellipse,
+    Image: image,
+    SVG: svg,
+    QR: barcodes.qrcode,
+    DateTime: dateTime,
+    Date: date,
+    Time: time,
+    Select: select,
+    Checkbox: checkbox,
+    RadioGroup: radioGroup,
+    'PDF Page': embeddedPdfPage,
+    EAN13: barcodes.ean13,
+    Code128: barcodes.code128,
+  };
+};

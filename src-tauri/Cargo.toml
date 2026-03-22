@@ -20,6 +20,28 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git"}
+image = "0.25"
+regex = "1"
+pdf-extract = "0.10.0"
+thiserror = "2"
+anyhow = "1"
+
+# 性能优化配置
+# 在 Debug 模式下也对 OCR 相关库使用 Release 优化
+# 这样 pnpm tauri dev 时 OCR 性能也很快,但您的代码仍可调试
+[profile.dev.package.ocr-rs]
+opt-level = 3  # 最高优化级别
+
+[profile.dev.package.image]
+opt-level = 3  # 图像处理库也优化
+
+# 如果还嫌慢,可以取消下面的注释优化 MNN 后端
+# [profile.dev.package."*"]  # 所有依赖都优化
+# opt-level = 2
+
 
