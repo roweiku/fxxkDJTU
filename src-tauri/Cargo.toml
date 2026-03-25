@@ -24,7 +24,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git"}
+ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", rev = "8c13de2211f1234f39cd272e735b83a5e01dadf6" }
 image = "0.25"
 regex = "1"
 pdf-extract = "0.10.0"

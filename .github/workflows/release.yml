@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CI_WORKFLOW_ID: '251078402'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          VERSION=$(python -c "import json; print(json.load(open('package.json'))['version'])")
+          TAURI_VERSION=$(python -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          TAG="${GITHUB_REF_NAME#v}"
+          test "$VERSION" = "$TAG"
+          test "$TAURI_VERSION" = "$TAG"
+
+      - name: Find successful CI Build run
+        id: ci_run
+        shell: bash
+        run: |
+          RUN_ID=$(gh api \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/${CI_WORKFLOW_ID}/runs?head_sha=${GITHUB_SHA}&status=completed&exclude_pull_requests=true" \
+            --jq '.workflow_runs[] | select(.name == "CI Build" and .conclusion == "success") | .id' | head -n 1)
+          test -n "$RUN_ID"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.ci_run.outputs.run_id }}
+          name: Linux-deb
+          path: release-artifacts/linux
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.ci_run.outputs.run_id }}
+          name: Windows-nsis
+          path: release-artifacts/windows
+
+      - name: Show downloaded release assets
+        shell: bash
+        run: |
+          ls -R release-artifacts
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/linux/*.deb
+            release-artifacts/windows/*.exe

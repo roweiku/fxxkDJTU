@@ -1,0 +1,199 @@
+name: CI Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-build-inputs:
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PDFME_REPO_URL: ${{ vars.PDFME_REPO_URL || 'https://github.com/roweiku/pdfme.git' }}
+      PDFME_REF: ${{ vars.PDFME_REF || '1b4c884db01770c1cbc2c7aed93520447f323b9e' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Checkout sibling pdfme repository
+        shell: bash
+        run: |
+          git clone "$PDFME_REPO_URL" "$GITHUB_WORKSPACE/../pdfme"
+          cd "$GITHUB_WORKSPACE/../pdfme"
+          git checkout "$PDFME_REF"
+
+      - name: Cache pdfme npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-pdfme-npm-${{ env.PDFME_REF }}
+          restore-keys: |
+            ${{ runner.os }}-pdfme-npm-
+
+      - name: Install and build pdfme
+        shell: bash
+        env:
+          npm_config_script_shell: bash
+        run: |
+          cd "$GITHUB_WORKSPACE/../pdfme"
+          npm install
+          npm run build
+
+      - name: Download OCR model assets
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/models" "$GITHUB_WORKSPACE/src-tauri/models"
+          gh release download models-v1 --repo "$GITHUB_REPOSITORY" --pattern "ocr-models-v1.tar.gz" --dir "$RUNNER_TEMP/models"
+          python - <<'PY'
+          import os
+          import tarfile
+
+          archive = os.path.join(os.environ['RUNNER_TEMP'], 'models', 'ocr-models-v1.tar.gz')
+          target = os.path.join(os.environ['GITHUB_WORKSPACE'], 'src-tauri', 'models')
+          with tarfile.open(archive, 'r:gz') as tar:
+              tar.extractall(target)
+          PY
+
+      - name: Package shared build inputs
+        shell: bash
+        run: |
+          tar -C "$GITHUB_WORKSPACE" -czf "$RUNNER_TEMP/shared-build-inputs.tar.gz" src-tauri/models
+          tar -C "$GITHUB_WORKSPACE/.." -czf "$RUNNER_TEMP/pdfme-build.tar.gz" pdfme
+
+      - name: Upload shared build inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-build-inputs
+          path: |
+            ${{ runner.temp }}/shared-build-inputs.tar.gz
+            ${{ runner.temp }}/pdfme-build.tar.gz
+          if-no-files-found: error
+
+  build:
+    needs: prepare-build-inputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bundle: deb
+            artifact_glob: src-tauri/target/release/bundle/deb/*.deb
+          - os: windows-latest
+            bundle: nsis
+            artifact_glob: src-tauri/target/release/bundle/nsis/*.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            clang \
+            libclang-dev \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libjpeg-dev \
+            libgif-dev
+
+      - name: Install Windows bundling dependencies
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: choco install nsis -y
+
+      - name: Download shared build inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-build-inputs
+          path: ${{ runner.temp }}/shared-build-inputs
+
+      - name: Restore shared build inputs on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          tar -C "$GITHUB_WORKSPACE" -xzf "$RUNNER_TEMP/shared-build-inputs/shared-build-inputs.tar.gz"
+          tar -C "$GITHUB_WORKSPACE/.." -xzf "$RUNNER_TEMP/shared-build-inputs/pdfme-build.tar.gz"
+
+      - name: Restore shared build inputs on Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          tar -C "$env:GITHUB_WORKSPACE" -xzf "$env:RUNNER_TEMP/shared-build-inputs/shared-build-inputs.tar.gz"
+          tar -C (Join-Path $env:GITHUB_WORKSPACE '..') -xzf "$env:RUNNER_TEMP/shared-build-inputs/pdfme-build.tar.gz"
+
+      - name: Install project dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Build application bundle
+        shell: bash
+        run: pnpm tauri build --bundles ${{ matrix.bundle }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-${{ matrix.bundle }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error

@@ -3144,7 +3144,7 @@ dependencies = [
 [[package]]
 name = "ocr-rs"
 version = "2.0.1"
-source = "git+https://github.com/zibo-chen/rust-paddle-ocr.git#8c13de2211f1234f39cd272e735b83a5e01dadf6"
+source = "git+https://github.com/zibo-chen/rust-paddle-ocr.git?rev=8c13de2211f1234f39cd272e735b83a5e01dadf6#8c13de2211f1234f39cd272e735b83a5e01dadf6"
 dependencies = [
  "bindgen",
  "cc",

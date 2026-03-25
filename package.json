@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:linux": "tauri build --bundles deb",
+    "build:windows": "tauri build --bundles nsis"
   },
   "dependencies": {
     "@pdfme/common": "file:../pdfme/packages/common",
