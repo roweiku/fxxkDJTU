@@ -240,6 +240,37 @@
               >
                 确认
               </Button>
+              <Button
+                v-else-if="row.status === 'pending' && hasError(row)"
+                size="sm"
+                variant="ghost"
+                class="h-7 px-2 text-xs"
+                @click="confirmErrorRow(row)"
+              >
+                确认
+              </Button>
+              <template v-else-if="row.status === 'unmatched'">
+                <div class="flex gap-1 justify-center">
+                  <Button
+                    v-if="!isInPdf(row)"
+                    size="sm"
+                    variant="ghost"
+                    class="h-7 px-2 text-xs"
+                    @click="matchStore.addToPdf(row.id)"
+                  >
+                    加入PDF
+                  </Button>
+                  <Button
+                    v-else
+                    size="sm"
+                    variant="ghost"
+                    class="h-7 px-2 text-xs text-muted-foreground"
+                    @click="matchStore.removeFromPdf(row.group?.id ?? row.id)"
+                  >
+                    移出PDF
+                  </Button>
+                </div>
+              </template>
               <template v-else-if="row.status === 'invoice-merged' && row.group">
                 <div class="flex gap-1 justify-center">
                   <Button
@@ -282,12 +313,12 @@
     </div>
 
     <!-- 生成 PDF 按钮 -->
-    <div v-if="matchStore.successfulGroups.length > 0" class="flex justify-end">
+    <div v-if="matchStore.pdfGroups.length > 0" class="flex justify-end">
       <Button
         :disabled="isGeneratingPdf"
         @click="handleGeneratePdf"
       >
-        {{ isGeneratingPdf ? '生成中...' : `生成PDF (${matchStore.successfulGroups.length})` }}
+        {{ isGeneratingPdf ? '生成中...' : `生成PDF (${matchStore.pdfGroups.length})` }}
       </Button>
     </div>
 
@@ -464,6 +495,23 @@ function confirmRow(row: ReviewRow) {
   }
 }
 
+function confirmErrorRow(row: ReviewRow) {
+  for (const item of row.items) {
+    if (item.status === 'error') {
+      matchStore.confirmErrorItem(item.id);
+    } else {
+      matchStore.confirmItem(item.id);
+    }
+  }
+}
+
+/** 判断行是否已加入 PDF 生成池 */
+function isInPdf(row: ReviewRow): boolean {
+  if (row.group) return matchStore.forcePdfGroupIds.has(row.group.id);
+  // 未分组单项：检查是否已被 addToPdf 创建了组
+  return matchStore.forcePdfGroupIds.has(row.id);
+}
+
 /** 手动合并（带冲突检测） */
 function handleManualMatch() {
   const prep = matchStore.prepareManualMatch();
@@ -494,7 +542,7 @@ const isGeneratingPdf = ref(false);
 async function handleGeneratePdf() {
   isGeneratingPdf.value = true;
   try {
-    const result = await generateFromGroups(matchStore.successfulGroups);
+    const result = await generateFromGroups(matchStore.pdfGroups);
 
     if (result.skippedGroups.length > 0) {
       console.warn(`跳过 ${result.skippedGroups.length} 个无匹配模板的组`);

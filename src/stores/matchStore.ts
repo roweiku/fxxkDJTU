@@ -251,6 +251,8 @@ export const useMatchStore = defineStore('match', {
     matchedGroups: [] as MatchGroup[],
     /** 多选选中的 ID（行 ID，可能是 item.id 或 group.id） */
     selectedIds: new Set<string>(),
+    /** 手动加入 PDF 的组 ID 集合 */
+    forcePdfGroupIds: new Set<string>(),
   }),
 
   getters: {
@@ -268,6 +270,15 @@ export const useMatchStore = defineStore('match', {
     /** 匹配成功的 item ID 集合 */
     successfullyMatchedItemIds(): Set<string> {
       return collectItemIds(this.successfulGroups);
+    },
+
+    /** 用于 PDF 生成的组：成功组 + 手动加入的组（去重） */
+    pdfGroups(): MatchGroup[] {
+      const successIds = new Set(this.successfulGroups.map((g) => g.id));
+      const forced = this.matchedGroups.filter(
+        (g) => this.forcePdfGroupIds.has(g.id) && !successIds.has(g.id),
+      );
+      return [...this.successfulGroups, ...forced];
     },
 
     /**
@@ -409,6 +420,16 @@ export const useMatchStore = defineStore('match', {
       }
     },
 
+    /** 确认错误项：提升状态为 check 并标记已确认 */
+    confirmErrorItem(id: string) {
+      const item = this.reviewItems.find((r) => r.id === id);
+      if (item && item.status === 'error') {
+        item.status = 'check';
+        item.confirmed = true;
+        this.scheduleAutoMatch();
+      }
+    },
+
     /** 批量确认所有 success 和 check 项 */
     confirmAllNonError() {
       for (const item of this.reviewItems) {
@@ -417,6 +438,34 @@ export const useMatchStore = defineStore('match', {
         }
       }
       this.scheduleAutoMatch();
+    },
+
+    /** 将未匹配行加入 PDF 生成池（未分组单项自动创建组） */
+    addToPdf(rowId: string) {
+      // 检查是否已有组
+      const existingGroup = this.matchedGroups.find((g) => g.id === rowId);
+      if (existingGroup) {
+        this.forcePdfGroupIds.add(existingGroup.id);
+        return;
+      }
+      // 未分组单项：创建单项 MatchGroup
+      const item = this.reviewItems.find((r) => r.id === rowId);
+      if (!item) return;
+      const group = createGroup(
+        {
+          taobao: item.source === 'taobao' ? item : null,
+          alipay: item.source === 'alipay' ? item : null,
+          invoice: item.source === 'invoice' ? item : null,
+        },
+        'manual',
+      );
+      this.matchedGroups.push(group);
+      this.forcePdfGroupIds.add(group.id);
+    },
+
+    /** 从 PDF 生成池移除 */
+    removeFromPdf(rowId: string) {
+      this.forcePdfGroupIds.delete(rowId);
     },
 
     /**
@@ -790,6 +839,7 @@ export const useMatchStore = defineStore('match', {
       this.reviewItems = [];
       this.matchedGroups = [];
       this.selectedIds.clear();
+      this.forcePdfGroupIds.clear();
     },
   },
 });
