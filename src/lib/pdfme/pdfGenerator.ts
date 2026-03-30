@@ -3,7 +3,7 @@ import { Template, checkTemplate } from '@pdfme/common';
 import type { MatchGroup } from '@/types/match';
 
 /** 可用模板 key */
-type TemplateKey = '1pdf1img' | '1pdf2img' | '3pdf1img';
+type TemplateKey = '1pdf1img' | '1pdf2img';
 
 /** 模板字段与数据的映射描述 */
 interface FieldMapping {
@@ -32,13 +32,6 @@ const TEMPLATE_FIELD_MAPS: Record<TemplateKey, FieldMapping[]> = {
     { fieldName: 'field4', type: 'image', ocrEntryIndex: 1, ocrSource: 'taobao' },
     { fieldName: 'field5', type: 'image', ocrEntryIndex: 1, ocrSource: 'alipay' },
   ],
-  '3pdf1img': [
-    { fieldName: 'field1', type: 'pdf', pageIndex: 0 },
-    { fieldName: 'field2', type: 'image', ocrEntryIndex: 0, ocrSource: 'taobao' },
-    { fieldName: 'field3', type: 'image', ocrEntryIndex: 0, ocrSource: 'alipay' },
-    { fieldName: 'field4', type: 'pdf', pageIndex: 1 },
-    { fieldName: 'field5', type: 'pdf', pageIndex: 2 },
-  ],
 };
 
 export interface PdfGenerationResult {
@@ -48,12 +41,11 @@ export interface PdfGenerationResult {
 }
 
 /**
- * 根据发票 PDF 页数和 OcrEntry 数量选择模板
+ * 根据 OcrEntry 数量选择模板（PDF 额外页动态生成，不影响模板选择）
  */
-export function selectTemplate(pageCount: number, ocrEntryCount: number): TemplateKey | null {
-  if (pageCount >= 2 && ocrEntryCount === 1) return '3pdf1img';
-  if (pageCount === 1 && ocrEntryCount === 1) return '1pdf1img';
-  if (pageCount === 1 && ocrEntryCount === 2) return '1pdf2img';
+export function selectTemplate(_pageCount: number, ocrEntryCount: number): TemplateKey | null {
+  if (ocrEntryCount === 1) return '1pdf1img';
+  if (ocrEntryCount === 2) return '1pdf2img';
   return null;
 }
 
@@ -161,6 +153,31 @@ export async function generateFromGroups(
     const rawInput = await buildInputForGroup(group, key);
     for (const [k, v] of Object.entries(rawInput)) {
       mergedInput[prefix + k] = v;
+    }
+
+    // 为多页发票动态追加剩余 PDF 页的 embeddedPdfPage schema
+    if (pageCount > 1) {
+      const invoicePath = group.invoiceEntry?.invoice.filePath;
+      if (invoicePath) {
+        const pdfDataUri = mergedInput[prefix + 'field1'] ?? await readFileAsDataUri(invoicePath);
+        for (let pi = 1; pi < pageCount; pi++) {
+          const fieldName = `${prefix}extraPage${pi}`;
+          allSchemas.push([{
+            name: fieldName,
+            type: 'embeddedPdfPage',
+            content: '',
+            position: { x: 30, y: 10 },
+            width: 262,
+            height: 190,
+            rotate: 0,
+            opacity: 1,
+            pageIndex: pi,
+            required: false,
+            readOnly: false,
+          }] as unknown as Template['schemas'][number]);
+          mergedInput[fieldName] = pdfDataUri;
+        }
+      }
     }
   }
 
