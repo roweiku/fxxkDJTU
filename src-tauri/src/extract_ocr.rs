@@ -2,6 +2,8 @@ use crate::ocr::OcrResult;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+const OCR_Y_TOLERANCE: i32 = 15;
+
 /// 提取策略枚举（公开以便外部使用）
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -105,7 +107,7 @@ fn extract_taobao_order(ocr_results: &[OcrResult]) -> TransactionInfo {
         // 提取付款时间
         if text.contains("付款时间") {
             info.pay_time = find_next_text(ocr_results, index)
-                .filter(|next_result| check_y_position(&ocr_results[index], next_result, 10))
+                .filter(|next_result| check_y_position(&ocr_results[index], next_result, OCR_Y_TOLERANCE))
                 .and_then(|r| extract_time(&r.text));
         }
 
@@ -113,7 +115,7 @@ fn extract_taobao_order(ocr_results: &[OcrResult]) -> TransactionInfo {
         // 提取支付宝交易号
         if text.contains("支付宝交易号") {
             info.order_id = find_next_text(ocr_results, index)
-                .filter(|next_result| check_y_position(&ocr_results[index], next_result, 10))
+                .filter(|next_result| check_y_position(&ocr_results[index], next_result, OCR_Y_TOLERANCE))
                 .and_then(|r| extract_28_digit_number(&r.text));
         }
     }
@@ -148,14 +150,14 @@ fn extract_alipay_bill(ocr_results: &[OcrResult]) -> TransactionInfo {
         // 提取支付时间
         if text.contains("支付时间") {
             info.pay_time = find_next_text(ocr_results, index)
-                .filter(|next_result| check_y_position(&ocr_results[index], next_result, 10))
+                .filter(|next_result| check_y_position(&ocr_results[index], next_result, OCR_Y_TOLERANCE))
                 .and_then(|r| extract_time(&r.text));
         }
 
         // 提取订单号（28位）
         if text == "订单号" {
             info.order_id = find_next_text(ocr_results, index)
-                .filter(|next_result| check_y_position(&ocr_results[index], next_result, 10))
+                .filter(|next_result| check_y_position(&ocr_results[index], next_result, OCR_Y_TOLERANCE))
                 .and_then(|r| extract_28_digit_number(&r.text));
         }
     }
