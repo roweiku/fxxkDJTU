@@ -1,0 +1,3 @@
+[submodule "pdfme"]
+	path = pdfme
+	url = https://github.com/roweiku/pdfme.git

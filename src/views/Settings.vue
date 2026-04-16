@@ -90,11 +90,37 @@
     >
       {{ message }}
     </div>
+
+    <!-- 版本信息与更新 -->
+    <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+      <h2 class="text-lg font-semibold mb-4">关于</h2>
+      <div class="flex items-center gap-4">
+        <span class="text-sm text-gray-600 dark:text-gray-400">
+          当前版本：<span class="font-mono font-medium text-gray-800 dark:text-gray-200">v{{ appVersion }}</span>
+        </span>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          :disabled="checking" 
+          @click="manualCheckUpdate"
+        >
+          {{ checking ? '检查中...' : '检查更新' }}
+        </Button>
+        <span 
+          v-if="updateMessage" 
+          class="text-sm"
+          :class="updateMessageType === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'"
+        >
+          {{ updateMessage }}
+        </span>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, inject, onMounted, watch } from 'vue';
+import { getVersion } from '@tauri-apps/api/app';
 import { useOcrStore } from '@/stores/ocrStore';
 import type { ModelConfig } from '@/types/ocr';
 import { 
@@ -124,6 +150,13 @@ const classifiedModels = ref<ClassifiedModels>({
 });
 const message = ref('');
 const messageType = ref<'success' | 'error'>('success');
+
+// 版本与更新
+const appVersion = ref('');
+const checking = ref(false);
+const updateMessage = ref('');
+const updateMessageType = ref<'success' | 'error'>('success');
+const checkForUpdate = inject<(manual: boolean) => Promise<boolean>>('checkForUpdate');
 
 console.log('[Settings] State 初始化完成:', { 
   selectedConfig: selectedConfig.value, 
@@ -166,6 +199,7 @@ function extractFileName(fullPath: string): string {
 onMounted(async () => {
   console.log('[Settings] onMounted 钩子触发！');
   try {
+    appVersion.value = await getVersion();
     await loadModels();
     await loadCurrentConfig();
     console.log('[Settings] onMounted 完成');
@@ -200,6 +234,26 @@ async function loadCurrentConfig() {
 async function resetToDefault() {
   selectedConfig.value = await getDefaultConfig();
   showMessage('已重置为默认配置', 'success');
+}
+
+async function manualCheckUpdate() {
+  if (!checkForUpdate) return;
+  checking.value = true;
+  updateMessage.value = '';
+  try {
+    const found = await checkForUpdate(true);
+    if (!found) {
+      updateMessage.value = '已是最新版本';
+      updateMessageType.value = 'success';
+      setTimeout(() => updateMessage.value = '', 3000);
+    }
+  } catch (e) {
+    updateMessage.value = '检查失败';
+    updateMessageType.value = 'error';
+    setTimeout(() => updateMessage.value = '', 3000);
+  } finally {
+    checking.value = false;
+  }
 }
 
 function showMessage(msg: string, type: 'success' | 'error') {

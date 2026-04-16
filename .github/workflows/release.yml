@@ -1,0 +1,177 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions: write-all
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.ref }}'
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    name: Check Tag & Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is from main
+        run: |
+          TAG_COMMIT=$(git rev-list -n 1 ${GITHUB_REF##*/})
+          if ! git rev-list origin/main | grep -q "$TAG_COMMIT"; then
+            echo "❌ Tag is not from main branch"
+            exit 1
+          fi
+          echo "✅ Tag is from main"
+
+      - name: Verify version consistency
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PKG_VERSION="v$(jq -r .version package.json)"
+          if [[ "$TAG" != "$PKG_VERSION" ]]; then
+            echo "❌ Tag $TAG != package.json $PKG_VERSION"
+            exit 1
+          fi
+          echo "✅ Version consistent: $TAG"
+
+  release:
+    name: Build ${{ matrix.target }}
+    needs: [check-version]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: 'v1-rust'
+          key: 'release-${{ matrix.os }}-${{ matrix.target }}'
+          workspaces: src-tauri -> target
+          cache-all-crates: true
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Build pdfme submodule
+        working-directory: pdfme
+        run: |
+          npm install --ignore-scripts
+          npm run build
+
+      - name: Install project dependencies
+        run: pnpm install
+
+      - name: Build Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Release ${{ github.ref_name }}'
+          releaseBody: 'See Changelog.md for details.'
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
+          tauriScript: pnpm tauri
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }}
+
+  update-release:
+    name: Update Release Notes
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract changelog and update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # version without v prefix (matches artifact filenames)
+          VER="${TAG#v}"
+          BUILDTIME="$(TZ=Asia/Shanghai date)"
+          DL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+
+          # Extract changelog section for current version
+          awk "/^## ${TAG//./\\.}/{found=1; next} /^## v/{if(found) exit} found" Changelog.md > release_notes.txt
+          if [ ! -s release_notes.txt ]; then
+            echo "See Changelog.md for details." > release_notes.txt
+          fi
+
+          CHANGELOG=$(cat release_notes.txt)
+
+          cat > release_body.md <<ENDOFBODY
+          ${CHANGELOG}
+
+          ## 下载
+
+          ### Windows
+          - [64位](${DL}/fxxkdjtu_${VER}_x64-setup.exe)
+
+          ### Linux
+          #### DEB 包
+          - [64位](${DL}/fxxkdjtu_${VER}_amd64.deb)
+
+          #### AppImage（支持自动更新）
+          - [64位](${DL}/fxxkdjtu_${VER}_amd64.AppImage)
+
+          ---
+          Built at ${BUILDTIME}
+          ENDOFBODY
+
+          # Publish release and update body via gh CLI
+          gh release edit "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "Release ${TAG}" \
+            --notes-file release_body.md \
+            --draft=false \
+            --prerelease=${{ contains(github.ref_name, '-rc') }}

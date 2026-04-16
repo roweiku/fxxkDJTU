@@ -18,8 +18,15 @@ A fxxkDJTU GUI based on <a href="https://github.com/tauri-apps/tauri">Tauri</a>.
 ## Install
 
 请到发布页面下载对应的安装包：[Release page](https://github.com/roweiku/fxxkDJTU/releases)<br>
-Go to the [Release page](https://github.com/roweiku/fxxkDJTU/releases) to download the corresponding installation package<br>
-Supports Windows (x64), Linux (x64).
+Go to the [Release page](https://github.com/roweiku/fxxkDJTU/releases) to download the corresponding installation package.
+
+### 支持平台
+
+| 平台 | 架构 | 格式 | 说明 |
+|------|------|------|------|
+| Windows | x64 | `.exe` (NSIS) | 标准版 |
+| Linux | x64 | `.deb` | Debian/Ubuntu |
+| Linux | x64 | `.AppImage` | 通用 Linux（支持自动更新） |
 
 ## Features
 
@@ -45,6 +52,18 @@ To run the development server, execute the following commands after all prerequi
 pnpm i
 pnpm tauri dev
 ```
+
+## CI/CD
+
+项目使用 GitHub Actions 自动化构建和发布，详见 [docs/CICD.md](./docs/CICD.md)。
+
+### 发布流程
+
+1. 更新 `Changelog.md`，在顶部添加新版本条目
+2. 同步更新 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 中的版本号
+3. 提交并推送到 `main` 分支
+4. 创建并推送 tag：`git tag v0.x.x && git push origin v0.x.x`
+5. Release workflow 自动构建 2 个平台（Win x64 + Linux x64）并创建 GitHub Release
 
 ## Contributions
 

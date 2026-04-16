@@ -13,6 +13,7 @@
     "dialog:default",
     "fs:default",
     "fs:allow-write-file",
-    "fs:scope-resource-recursive"
+    "fs:scope-resource-recursive",
+    "updater:default"
   ]
 }

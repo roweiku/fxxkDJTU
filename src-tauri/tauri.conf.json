@@ -21,9 +21,18 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdDRUFGNEU5OEJDQkNDQTkKUldTcHpNdUw2ZlRxZklBSUx4SXBnV0RQbzliakJwaFJFRjM0Uk1tQTFmbVRscUhHR1RwZ0EvS2UK",
+      "endpoints": [
+        "https://github.com/roweiku/fxxkDJTU/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
-    "targets": "deb",
+    "targets": ["nsis", "deb", "appimage"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -33,6 +42,11 @@
     ],
     "resources": [
       "models/*"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese"]
+      }
+    }
   }
 }
