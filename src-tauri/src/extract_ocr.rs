@@ -142,7 +142,7 @@ fn extract_alipay_bill(ocr_results: &[OcrResult]) -> TransactionInfo {
         let text = &result.text;
 
         // 提取米
-        if text.contains("交易成功") || text.contains("支付成功") {
+        if text.contains("交易成功") || text.contains("支付成功") || text.contains("自动扣款成功") {
             info.amount = find_prev_text(ocr_results, index)
                 .and_then(|r| extract_amount_alipay(&r.text));
         }
@@ -231,9 +231,12 @@ fn extract_amount_taobao(text: &str) -> Option<f64> {
 }
 
 // TODO 合并
-/// 提取独立金额文本（如 "¥19.6" 或 "￥64.84"）
+/// 提取独立金额文本（如 "¥19.6" 或 "￥64.84"）。
+///
+/// 容忍金额尾部 OCR 噪声字符（实测样本中常见 'v'、'>'、'^' 等图标被误识为字符），
+/// 因此不再用 `$` 锚定行尾，但仍要求文本以 ￥/¥ 开头以避免误命中减免/折扣行。
 fn extract_standalone_amount(text: &str) -> Option<f64> {
-    let re = Regex::new(r"^[￥¥]([\d.]+)$").ok()?;
+    let re = Regex::new(r"^[￥¥]\s*(\d+(?:\.\d+)?)").ok()?;
     re.captures(text.trim())
         .and_then(|cap| cap.get(1))
         .and_then(|m| m.as_str().parse::<f64>().ok())
