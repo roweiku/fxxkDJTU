@@ -1,6 +1,7 @@
 import { readFile } from '@tauri-apps/plugin-fs';
 import { Template, checkTemplate } from '@pdfme/common';
 import type { MatchGroup } from '@/types/match';
+import { flattenStampAnnotations } from './flattenAnnotations';
 
 /** 可用模板 key */
 type TemplateKey = '1pdf1img' | '1pdf2img';
@@ -50,13 +51,22 @@ export function selectTemplate(_pageCount: number, ocrEntryCount: number): Templ
 }
 
 /**
- * 读取文件并转为 data URI (base64)
+ * 读取文件并转为 data URI (base64)。
+ * 对 PDF 文件会先扁平化 stamp annotation（把电子发票盖章烘焙进 content stream），
+ * 这样后续 embeddedPdfPage 经 pdf-lib embedPdf 时盖章不会丢失。
  */
 async function readFileAsDataUri(filePath: string): Promise<string> {
-  const bytes = await readFile(filePath);
+  let bytes = await readFile(filePath);
   const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
   let mime: string;
-  if (ext === 'pdf') mime = 'application/pdf';
+  if (ext === 'pdf') {
+    mime = 'application/pdf';
+    try {
+      bytes = await flattenStampAnnotations(new Uint8Array(bytes));
+    } catch (e) {
+      console.warn('[pdfGenerator] flattenStampAnnotations failed, fallback to original PDF:', e);
+    }
+  }
   else if (ext === 'png') mime = 'image/png';
   else if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
   else if (ext === 'bmp') mime = 'image/bmp';
@@ -81,6 +91,10 @@ async function loadTemplate(key: TemplateKey): Promise<Template> {
 
 /**
  * 为单个匹配组构建 pdfme inputs
+ *
+ * 注意：pdf 类型字段的值是该 PDF 整本的 dataURI。schema 重写时会把
+ * embeddedPdfPage 字段改为 image，并在 generateFromGroups 中将该字段
+ * 的 input 替换为对应 pageIndex 的 PNG dataURI。
  */
 async function buildInputForGroup(
   group: MatchGroup,

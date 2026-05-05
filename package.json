@@ -15,6 +15,7 @@
     "@pdfme/converter": "file:./pdfme/packages/converter",
     "@pdfme/generator": "file:./pdfme/packages/generator",
     "@pdfme/manipulator": "file:./pdfme/packages/manipulator",
+    "@pdfme/pdf-lib": "5.5.8",
     "@pdfme/schemas": "file:./pdfme/packages/schemas",
     "@pdfme/ui": "file:./pdfme/packages/ui",
     "@tailwindcss/vite": "^4.1.18",

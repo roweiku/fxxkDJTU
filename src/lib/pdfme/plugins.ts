@@ -17,7 +17,7 @@ import {
   embeddedPdfPage,
 } from '@pdfme/schemas';
 import { GlobalWorkerOptions } from 'pdfjs-dist';
-// @ts-expect-error Vite ?url import of worker asset
+// @ts-ignore Vite ?url import of worker asset
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
 
 // Pre-configure pdfjs worker so that the lazy initializer in

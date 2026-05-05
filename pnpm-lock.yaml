@@ -23,6 +23,9 @@ importers:
       '@pdfme/manipulator':
         specifier: file:./pdfme/packages/manipulator
         version: file:pdfme/packages/manipulator
+      '@pdfme/pdf-lib':
+        specifier: 5.5.8
+        version: 5.5.8
       '@pdfme/schemas':
         specifier: file:./pdfme/packages/schemas
         version: file:pdfme/packages/schemas(@pdfme/common@file:pdfme/packages/common(antd@5.29.3(date-fns@4.1.0)(react-dom@16.14.0(react@16.14.0))(react@16.14.0))(form-render@2.5.6(antd@5.29.3(date-fns@4.1.0)(react-dom@16.14.0(react@16.14.0))(react@16.14.0))(react-dom@16.14.0(react@16.14.0))(react@16.14.0)))
