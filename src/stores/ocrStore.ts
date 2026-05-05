@@ -264,6 +264,6 @@ export const useOcrStore = defineStore('ocr', {
   },
 
   persist: {
-    paths: ['modelConfig'],
+    pick: ['modelConfig'],
   },
 });
