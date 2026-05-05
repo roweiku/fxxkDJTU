@@ -96,13 +96,24 @@
               <template v-if="row.group">
                 <div class="flex flex-col gap-0.5">
                   <div v-for="(entry, i) in row.group.ocrEntries" :key="i" class="flex gap-2">
-                    <span v-if="entry.taobao" class="truncate text-sm" :title="entry.taobao.fileName">{{ entry.taobao.fileName }}</span>
-                    <span v-if="entry.alipay" class="truncate text-sm" :title="entry.alipay.fileName">{{ entry.alipay.fileName }}</span>
+                    <span
+                      v-if="entry.taobao"
+                      class="truncate text-sm cursor-pointer hover:underline hover:text-primary"
+                      :title="`点击打开: ${entry.taobao.fileName}`"
+                      @click.stop="openFile(entry.taobao.filePath)"
+                    >{{ entry.taobao.fileName }}</span>
+                    <span
+                      v-if="entry.alipay"
+                      class="truncate text-sm cursor-pointer hover:underline hover:text-primary"
+                      :title="`点击打开: ${entry.alipay.fileName}`"
+                      @click.stop="openFile(entry.alipay.filePath)"
+                    >{{ entry.alipay.fileName }}</span>
                   </div>
                   <span
                     v-if="row.group.invoiceEntry"
-                    class="truncate block text-sm"
-                    :title="row.group.invoiceEntry.invoice.fileName"
+                    class="truncate block text-sm cursor-pointer hover:underline hover:text-primary"
+                    :title="`点击打开: ${row.group.invoiceEntry.invoice.fileName}`"
+                    @click.stop="openFile(row.group.invoiceEntry.invoice.filePath)"
                   >{{ row.group.invoiceEntry.invoice.fileName }}</span>
                 </div>
               </template>
@@ -112,15 +123,17 @@
                     <span
                       v-for="item in ocrItems(row)"
                       :key="item.id"
-                      class="truncate text-sm"
-                      :title="item.fileName"
+                      class="truncate text-sm cursor-pointer hover:underline hover:text-primary"
+                      :title="`点击打开: ${item.fileName}`"
+                      @click.stop="openFile(item.filePath)"
                     >{{ item.fileName }}</span>
                   </div>
                   <span
                     v-for="item in invoiceItems(row)"
                     :key="item.id"
-                    class="truncate block text-sm"
-                    :title="item.fileName"
+                    class="truncate block text-sm cursor-pointer hover:underline hover:text-primary"
+                    :title="`点击打开: ${item.fileName}`"
+                    @click.stop="openFile(item.filePath)"
                   >{{ item.fileName }}</span>
                 </div>
               </template>
@@ -335,6 +348,8 @@
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { Receipt } from 'lucide-vue-next';
+import { openPath } from '@tauri-apps/plugin-opener';
+import { useToast } from 'vue-toastification';
 import { useMatchStore } from '@/stores/matchStore';
 import { usePdfStore } from '@/stores/pdfStore';
 import { generateFromGroups } from '@/lib/pdfme/pdfGenerator';
@@ -352,7 +367,18 @@ import type { ReviewRow, ReviewItem, FieldConflict, MatchGroup, OcrFieldSet } fr
 const matchStore = useMatchStore();
 const pdfStore = usePdfStore();
 const router = useRouter();
+const toast = useToast();
 const showMatched = ref(false);
+
+async function openFile(filePath: string | null | undefined) {
+  if (!filePath) return;
+  try {
+    await openPath(filePath);
+  } catch (e) {
+    console.error('[ResultReview] 打开文件失败:', e);
+    toast.error('打开文件失败');
+  }
+}
 
 // 冲突 Dialog 状态
 const conflictDialogOpen = ref(false);

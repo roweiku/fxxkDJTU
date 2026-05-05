@@ -8,7 +8,7 @@
     "opener:default",
     {
       "identifier": "opener:allow-open-path",
-      "allow": []
+      "allow": [{ "path": "**" }]
     },
     "dialog:default",
     "fs:default",
