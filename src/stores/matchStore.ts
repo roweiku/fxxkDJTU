@@ -4,6 +4,8 @@ import { useOcrStore } from './ocrStore';
 import type {
   ReviewItem,
   ReviewSource,
+  OrderSource,
+  PaymentSource,
   ReviewStatus,
   MatchGroup,
   OcrEntry,
@@ -34,8 +36,7 @@ function mapStatus(raw: string): ReviewStatus {
 
 /** 从 OCR 结果转换为 ReviewItem */
 function ocrToReview(e: FileProcessedEvent): ReviewItem {
-  const source: ReviewSource =
-    e.transaction_info?.strategy_type === 'taobao' ? 'taobao' : 'alipay';
+  const source: ReviewSource = e.transaction_info?.strategy_type ?? 'alipay';
   return {
     id: genId(source),
     source,
@@ -48,7 +49,7 @@ function ocrToReview(e: FileProcessedEvent): ReviewItem {
     payTime: e.transaction_info?.pay_time ?? null,
     invoiceNumber: null,
     invoiceDate: null,
-    seller: null,
+    seller: e.transaction_info?.merchant ?? null,
     buyer: null,
     itemContent: null,
     remark: null,
@@ -70,7 +71,7 @@ function invoiceToReview(e: FileInvoiceProcessedEvent): ReviewItem {
     filePath: e.file_path,
     fileName: e.file_name,
     amount: amt !== null ? amt : null,
-    orderId: null,
+    orderId: e.invoice_info?.order_id ?? null,
     payTime: null,
     invoiceNumber: e.invoice_info?.invoice_number ?? null,
     invoiceDate: e.invoice_info?.invoice_date ?? null,
@@ -90,17 +91,61 @@ function amountEquals(a: number | null, b: number | null): boolean {
 
 /** 特例关键词列表 */
 const SPECIAL_SELLERS = ['立创', '铨洲'];
+const ORDER_SOURCES: readonly OrderSource[] = ['taobao', 'xianyu', 'jd', 'meituan'];
+const PAYMENT_SOURCES: readonly PaymentSource[] = ['alipay', 'bank', 'meituan_pay'];
+
+function isOrderSource(source: ReviewSource): source is OrderSource {
+  return ORDER_SOURCES.includes(source as OrderSource);
+}
+
+function isPaymentSource(source: ReviewSource): source is PaymentSource {
+  return PAYMENT_SOURCES.includes(source as PaymentSource);
+}
+
+function areCompatibleSources(order: ReviewItem, payment: ReviewItem): boolean {
+  return (order.source === 'taobao' && payment.source === 'alipay')
+    || (order.source === 'xianyu' && payment.source === 'alipay')
+    || (order.source === 'jd' && payment.source === 'bank')
+    || (order.source === 'meituan' && payment.source === 'meituan_pay');
+}
+
+function orderAndPaymentMatch(order: ReviewItem, payment: ReviewItem): boolean {
+  if (!areCompatibleSources(order, payment)) return false;
+  if (order.orderId && payment.orderId) return order.orderId === payment.orderId;
+  return amountEquals(order.amount, payment.amount);
+}
+
+function invoiceMatches(invoice: ReviewItem, reference: ReviewItem | OcrEntry): boolean {
+  if (invoice.orderId && reference.orderId) {
+    return invoice.orderId === reference.orderId;
+  }
+  if (amountEquals(invoice.amount, reference.amount)) return true;
+
+  const items = 'source' in reference
+    ? [reference]
+    : [reference.order, reference.payment].filter((item): item is ReviewItem => item !== null);
+  return items.some((item) => {
+    if (item.source !== 'meituan' || !item.seller || !invoice.seller) return false;
+    const orderSeller = item.seller.replace(/[\s()（）>]/g, '');
+    const invoiceSeller = invoice.seller.replace(/[\s()（）>]/g, '');
+    const sellerMatches = orderSeller.includes(invoiceSeller)
+      || invoiceSeller.includes(orderSeller);
+    if (!sellerMatches || item.amount === null || invoice.amount === null) return false;
+    const difference = item.amount - invoice.amount;
+    return difference >= 0 && difference <= Math.min(10, item.amount * 0.25);
+  });
+}
 
 /**
  * 判断匹配组是否"匹配成功"：
  * - invoice-merge 类型始终视为成功
- * - 规则 A：淘宝 + 支付宝 + 发票三者都存在
+ * - 规则 A：订单截图 + 对应支付明细 + 发票三者都存在
  * - 规则 B：发票的 seller 或 itemContent 包含特例关键词
  */
 function isGroupSuccessful(group: MatchGroup): boolean {
   if (group.matchType === 'invoice-merge') return true;
   const ocr = group.ocrEntries[0];
-  if (ocr?.taobao && ocr?.alipay && group.invoiceEntry) return true;
+  if (ocr?.order && ocr?.payment && group.invoiceEntry) return true;
   if (group.invoiceEntry) {
     const { seller, itemContent } = group.invoiceEntry.invoice;
     for (const keyword of SPECIAL_SELLERS) {
@@ -120,18 +165,18 @@ function createInvoiceEntry(invoice: ReviewItem): InvoiceEntry {
   };
 }
 
-/** 从淘宝/支付宝 ReviewItem 创建 OcrEntry */
+/** 从电商订单/支付明细 ReviewItem 创建 OcrEntry */
 function createOcrEntry(
-  taobao: ReviewItem | null,
-  alipay: ReviewItem | null,
+  order: ReviewItem | null,
+  payment: ReviewItem | null,
   overrideFields?: Partial<OcrFieldSet>,
 ): OcrEntry {
-  const items = [taobao, alipay].filter((x): x is ReviewItem => x !== null);
+  const items = [order, payment].filter((x): x is ReviewItem => x !== null);
   const resolved = resolveOcrFields(items);
   const fields = resolved.ok ? resolved : resolved.partial;
   return {
-    taobao,
-    alipay,
+    order,
+    payment,
     amount: overrideFields?.amount !== undefined ? overrideFields.amount : fields.amount,
     orderId: overrideFields?.orderId !== undefined ? overrideFields.orderId : fields.orderId,
     payTime: overrideFields?.payTime !== undefined ? overrideFields.payTime : fields.payTime,
@@ -140,17 +185,17 @@ function createOcrEntry(
 
 /** 创建 MatchGroup 对象的工厂函数（单 OcrEntry） */
 function createGroup(
-  items: { taobao?: ReviewItem | null; alipay?: ReviewItem | null; invoice?: ReviewItem | null },
+  items: { order?: ReviewItem | null; payment?: ReviewItem | null; invoice?: ReviewItem | null },
   matchType: 'auto' | 'manual',
   overrideFields?: Partial<OcrFieldSet>,
 ): MatchGroup {
-  const taobao = items.taobao ?? null;
-  const alipay = items.alipay ?? null;
+  const order = items.order ?? null;
+  const payment = items.payment ?? null;
   const invoice = items.invoice ?? null;
 
   return {
     id: genId('group'),
-    ocrEntries: [createOcrEntry(taobao, alipay, overrideFields)],
+    ocrEntries: [createOcrEntry(order, payment, overrideFields)],
     invoiceEntry: invoice ? createInvoiceEntry(invoice) : null,
     matchType,
   };
@@ -165,8 +210,8 @@ function isConfirmed(item: ReviewItem): boolean {
 function groupItems(g: MatchGroup): ReviewItem[] {
   const items: ReviewItem[] = [];
   for (const entry of g.ocrEntries) {
-    if (entry.taobao) items.push(entry.taobao);
-    if (entry.alipay) items.push(entry.alipay);
+    if (entry.order) items.push(entry.order);
+    if (entry.payment) items.push(entry.payment);
   }
   if (g.invoiceEntry) items.push(g.invoiceEntry.invoice);
   return items;
@@ -204,7 +249,7 @@ const OCR_FIELD_DEFS: {
 ];
 
 /**
- * 从淘宝/支付宝 ReviewItem 解析 OCR 聚合字段
+ * 从订单/支付 ReviewItem 解析 OCR 聚合字段
  * 无冲突时返回 { ok: true, ... }，有冲突返回 { ok: false, conflicts, partial }
  */
 function resolveOcrFields(items: ReviewItem[]): ResolvedOcrFields {
@@ -402,7 +447,7 @@ export const useMatchStore = defineStore('match', {
     /** 更新审核项字段（行内编辑，自动处理类型转换） */
     updateField(id: string, key: string, rawValue: string, type: 'text' | 'number') {
       const parsed = type === 'number'
-        ? (rawValue ? parseFloat(rawValue) : null)
+        ? (rawValue ? parseFloat(rawValue.replace(/[,，]/g, '')) : null)
         : (rawValue || null);
       const item = this.reviewItems.find((r) => r.id === id);
       if (item) {
@@ -453,8 +498,8 @@ export const useMatchStore = defineStore('match', {
       if (!item) return;
       const group = createGroup(
         {
-          taobao: item.source === 'taobao' ? item : null,
-          alipay: item.source === 'alipay' ? item : null,
+          order: isOrderSource(item.source) ? item : null,
+          payment: isPaymentSource(item.source) ? item : null,
           invoice: item.source === 'invoice' ? item : null,
         },
         'manual',
@@ -514,8 +559,8 @@ export const useMatchStore = defineStore('match', {
       const usedIds = collectItemIds(this.matchedGroups);
 
       // 未分组的候选项池
-      const ungroupedTaobao = matchable.filter((r) => r.source === 'taobao' && !usedIds.has(r.id));
-      const ungroupedAlipay = matchable.filter((r) => r.source === 'alipay' && !usedIds.has(r.id));
+      const ungroupedOrders = matchable.filter((r) => isOrderSource(r.source) && !usedIds.has(r.id));
+      const ungroupedPayments = matchable.filter((r) => isPaymentSource(r.source) && !usedIds.has(r.id));
       const ungroupedInvoice = matchable.filter((r) => r.source === 'invoice' && !usedIds.has(r.id));
       const localUsed = new Set<string>();
 
@@ -525,68 +570,69 @@ export const useMatchStore = defineStore('match', {
         const ocr = g.ocrEntries[0];
         if (!ocr) continue;
 
+        if (!ocr.order && ocr.payment) {
+          const order = ungroupedOrders.find(
+            (candidate) => !localUsed.has(candidate.id)
+              && orderAndPaymentMatch(candidate, ocr.payment!),
+          );
+          if (order) {
+            localUsed.add(order.id);
+            ocr.order = order;
+            const resolved = resolveOcrFields([ocr.order, ocr.payment].filter(Boolean) as ReviewItem[]);
+            const fields = resolved.ok ? resolved : resolved.partial;
+            Object.assign(ocr, fields);
+          }
+        }
+        if (!ocr.payment && ocr.order) {
+          const payment = ungroupedPayments.find(
+            (candidate) => !localUsed.has(candidate.id)
+              && orderAndPaymentMatch(ocr.order!, candidate),
+          );
+          if (payment) {
+            localUsed.add(payment.id);
+            ocr.payment = payment;
+            const resolved = resolveOcrFields([ocr.order, ocr.payment].filter(Boolean) as ReviewItem[]);
+            const fields = resolved.ok ? resolved : resolved.partial;
+            Object.assign(ocr, fields);
+          }
+        }
+        // 先补齐订单/支付，再关联发票；京东发票可优先用订单号消除同金额歧义。
         if (!g.invoiceEntry) {
-          const refAmount = ocr.amount;
-          if (refAmount !== null) {
-            const inv = ungroupedInvoice.find(
-              (i) => !localUsed.has(i.id) && amountEquals(i.amount, refAmount),
-            );
-            if (inv) {
-              localUsed.add(inv.id);
-              g.invoiceEntry = createInvoiceEntry(inv);
-            }
-          }
-        }
-        if (!ocr.taobao && ocr.orderId) {
-          const tb = ungroupedTaobao.find(
-            (t) => !localUsed.has(t.id) && t.orderId === ocr.orderId,
+          const inv = ungroupedInvoice.find(
+            (i) => !localUsed.has(i.id) && invoiceMatches(i, ocr),
           );
-          if (tb) {
-            localUsed.add(tb.id);
-            ocr.taobao = tb;
-            const resolved = resolveOcrFields([ocr.taobao, ocr.alipay].filter(Boolean) as ReviewItem[]);
-            const fields = resolved.ok ? resolved : resolved.partial;
-            Object.assign(ocr, fields);
-          }
-        }
-        if (!ocr.alipay && ocr.orderId) {
-          const ap = ungroupedAlipay.find(
-            (a) => !localUsed.has(a.id) && a.orderId === ocr.orderId,
-          );
-          if (ap) {
-            localUsed.add(ap.id);
-            ocr.alipay = ap;
-            const resolved = resolveOcrFields([ocr.taobao, ocr.alipay].filter(Boolean) as ReviewItem[]);
-            const fields = resolved.ok ? resolved : resolved.partial;
-            Object.assign(ocr, fields);
+          if (inv) {
+            localUsed.add(inv.id);
+            g.invoiceEntry = createInvoiceEntry(inv);
           }
         }
       }
 
-      const poolTb = ungroupedTaobao.filter((r) => !localUsed.has(r.id));
-      const poolAp = ungroupedAlipay.filter((r) => !localUsed.has(r.id));
+      const poolOrders = ungroupedOrders.filter((r) => !localUsed.has(r.id));
+      const poolPayments = ungroupedPayments.filter((r) => !localUsed.has(r.id));
       const poolInv = ungroupedInvoice.filter((r) => !localUsed.has(r.id));
 
-      // 阶段 1：Taobao ↔ Alipay 通过 orderId 精确匹配
+      // 阶段 1：订单 ↔ 支付
       const newGroups: MatchGroup[] = [];
-      for (const tb of poolTb) {
-        if (!tb.orderId || localUsed.has(tb.id)) continue;
-        const ap = poolAp.find(
-          (a) => !localUsed.has(a.id) && a.orderId === tb.orderId,
+      for (const order of poolOrders) {
+        if (localUsed.has(order.id)) continue;
+        const payment = poolPayments.find(
+          (candidate) => !localUsed.has(candidate.id)
+            && orderAndPaymentMatch(order, candidate),
         );
-        if (ap) {
-          localUsed.add(tb.id);
-          localUsed.add(ap.id);
-          newGroups.push(createGroup({ taobao: tb, alipay: ap }, 'auto'));
+        if (payment) {
+          localUsed.add(order.id);
+          localUsed.add(payment.id);
+          newGroups.push(createGroup({ order, payment }, 'auto'));
         }
       }
 
       // 阶段 2：已配对新组 ↔ Invoice 通过金额匹配
       for (const g of newGroups) {
-        const refAmount = g.ocrEntries[0]?.amount;
-        if (refAmount === null || refAmount === undefined) continue;
+        const ocr = g.ocrEntries[0];
+        if (!ocr) continue;
         const inv = poolInv.find(
-          (i) => !localUsed.has(i.id) && amountEquals(i.amount, refAmount),
+          (i) => !localUsed.has(i.id) && invoiceMatches(i, ocr),
         );
         if (inv) {
           localUsed.add(inv.id);
@@ -595,20 +641,24 @@ export const useMatchStore = defineStore('match', {
       }
 
       // 阶段 3：剩余单项 ↔ Invoice 通过金额匹配
-      const remainTb = poolTb.filter((r) => !localUsed.has(r.id));
-      const remainAp = poolAp.filter((r) => !localUsed.has(r.id));
+      const remainOrders = poolOrders.filter((r) => !localUsed.has(r.id));
+      const remainPayments = poolPayments.filter((r) => !localUsed.has(r.id));
       const remainInv = poolInv.filter((r) => !localUsed.has(r.id));
 
-      for (const item of [...remainTb, ...remainAp]) {
+      for (const item of [...remainOrders, ...remainPayments]) {
         if (item.amount === null || localUsed.has(item.id)) continue;
         const inv = remainInv.find(
-          (i) => !localUsed.has(i.id) && amountEquals(i.amount, item.amount),
+          (i) => !localUsed.has(i.id) && invoiceMatches(i, item),
         );
         if (inv) {
           localUsed.add(item.id);
           localUsed.add(inv.id);
           newGroups.push(createGroup(
-            { taobao: item.source === 'taobao' ? item : null, alipay: item.source === 'alipay' ? item : null, invoice: inv },
+            {
+              order: isOrderSource(item.source) ? item : null,
+              payment: isPaymentSource(item.source) ? item : null,
+              invoice: inv,
+            },
             'auto',
           ));
         }
@@ -655,8 +705,8 @@ export const useMatchStore = defineStore('match', {
       groupIdsToRemove: string[],
       overrideFields?: Partial<OcrFieldSet>,
     ) {
-      const taobao = items.find((r) => r.source === 'taobao') ?? null;
-      const alipay = items.find((r) => r.source === 'alipay') ?? null;
+      const order = items.find((r) => isOrderSource(r.source)) ?? null;
+      const payment = items.find((r) => isPaymentSource(r.source)) ?? null;
       const invoice = items.find((r) => r.source === 'invoice') ?? null;
 
       if (groupIdsToRemove.length > 0) {
@@ -666,7 +716,7 @@ export const useMatchStore = defineStore('match', {
       }
 
       this.matchedGroups.push(
-        createGroup({ taobao, alipay, invoice }, 'manual', overrideFields),
+        createGroup({ order, payment, invoice }, 'manual', overrideFields),
       );
       this.selectedIds.clear();
     },
@@ -790,8 +840,8 @@ export const useMatchStore = defineStore('match', {
           const item = this.reviewItems.find((r) => r.id === c.id);
           if (item) {
             ocrEntries.push(createOcrEntry(
-              item.source === 'taobao' ? item : null,
-              item.source === 'alipay' ? item : null,
+              isOrderSource(item.source) ? item : null,
+              isPaymentSource(item.source) ? item : null,
             ));
           }
         }

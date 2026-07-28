@@ -21,6 +21,29 @@ type Mat = [number, number, number, number, number, number];
 
 const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
 
+/**
+ * 修复 ULC 生成器写出的非法 PDF 文件头。
+ *
+ * 问题文件形如 `%%ULC:1.01.01 5 0 obj`：`%` 会把整行变成注释，因此
+ * `5 0 obj`（恰好是页面 /Contents）被严格解析器忽略。Acrobat/Poppler 会
+ * 猜测并恢复该对象，pdf-lib 则会在 embedPdf 时报告 missing Contents。
+ */
+export function repairMalformedUlcHeader(pdfBytes: Uint8Array): Uint8Array {
+  const scanLength = Math.min(pdfBytes.length, 1024);
+  const header = String.fromCharCode(...pdfBytes.subarray(0, scanLength));
+  const match = /^(%%ULC:[^\s\r\n]+)[ \t]+(\d+[ \t]+\d+[ \t]+obj)\b/m.exec(header);
+  if (!match) return pdfBytes;
+
+  const commentEnd = match.index + match[1].length;
+  const objectStart = match.index + match[0].lastIndexOf(match[2]);
+  if (objectStart <= commentEnd) return pdfBytes;
+
+  // 只把第一个分隔空白改为换行，保持文件长度与 xref 字节偏移不变。
+  const repaired = pdfBytes.slice();
+  repaired[commentEnd] = 0x0a;
+  return repaired;
+}
+
 // PDF 行向量约定下 p * A * B 的等价矩阵 C = A * B
 function mulMat(A: Mat, B: Mat): Mat {
   const [a1, b1, c1, d1, e1, f1] = A;
@@ -82,7 +105,7 @@ function computeStampCm(rect: number[], bbox: number[], matrix: Mat): Mat | null
 }
 
 export async function flattenStampAnnotations(pdfBytes: Uint8Array): Promise<Uint8Array> {
-  const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  const doc = await PDFDocument.load(repairMalformedUlcHeader(pdfBytes), { ignoreEncryption: true });
   const STAMP = PDFName.of('Stamp');
   const SUBTYPE = PDFName.of('Subtype');
   const RECT = PDFName.of('Rect');

@@ -75,8 +75,8 @@
               <template v-if="row.group">
                 <div class="flex flex-col gap-1">
                   <div v-for="(entry, i) in row.group.ocrEntries" :key="i" class="flex gap-1">
-                    <SourceIcon v-if="entry.taobao" source="taobao" size="sm" />
-                    <SourceIcon v-if="entry.alipay" source="alipay" size="sm" />
+                    <SourceIcon v-if="entry.order" :source="entry.order.source" size="sm" />
+                    <SourceIcon v-if="entry.payment" :source="entry.payment.source" size="sm" />
                   </div>
                   <SourceIcon v-if="row.group.invoiceEntry" source="invoice" size="sm" />
                 </div>
@@ -97,17 +97,17 @@
                 <div class="flex flex-col gap-0.5">
                   <div v-for="(entry, i) in row.group.ocrEntries" :key="i" class="flex gap-2">
                     <span
-                      v-if="entry.taobao"
+                      v-if="entry.order"
                       class="truncate text-sm cursor-pointer hover:underline hover:text-primary"
-                      :title="`点击打开: ${entry.taobao.fileName}`"
-                      @click.stop="openFile(entry.taobao.filePath)"
-                    >{{ entry.taobao.fileName }}</span>
+                      :title="`点击打开: ${entry.order.fileName}`"
+                      @click.stop="openFile(entry.order.filePath)"
+                    >{{ entry.order.fileName }}</span>
                     <span
-                      v-if="entry.alipay"
+                      v-if="entry.payment"
                       class="truncate text-sm cursor-pointer hover:underline hover:text-primary"
-                      :title="`点击打开: ${entry.alipay.fileName}`"
-                      @click.stop="openFile(entry.alipay.filePath)"
-                    >{{ entry.alipay.fileName }}</span>
+                      :title="`点击打开: ${entry.payment.fileName}`"
+                      @click.stop="openFile(entry.payment.filePath)"
+                    >{{ entry.payment.fileName }}</span>
                   </div>
                   <span
                     v-if="row.group.invoiceEntry"
@@ -157,7 +157,10 @@
                   </template>
                   <template v-else>
                     <div class="flex items-center gap-1">
-                      <SourceIcon source="taobao" size="sm" />
+                      <SourceIcon
+                        :source="row.group.ocrEntries[0]?.order?.source ?? row.group.ocrEntries[0]?.payment?.source ?? 'invoice'"
+                        size="sm"
+                      />
                       <span>{{ row.group.ocrEntries[0]?.amount != null ? `¥${row.group.ocrEntries[0].amount}` : '—' }}</span>
                     </div>
                     <div class="flex items-center gap-1">
@@ -420,7 +423,7 @@ function timeField(item: ReviewItem) {
     : { key: 'payTime', value: item.payTime };
 }
 
-/** 淘宝/支付宝项（横向显示） */
+/** 订单/支付项（横向显示） */
 function ocrItems(row: ReviewRow) {
   return row.items.filter((i) => i.source !== 'invoice');
 }

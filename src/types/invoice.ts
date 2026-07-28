@@ -2,6 +2,7 @@
 
 export interface InvoiceInfo {
   invoice_number: string;
+  order_id: string;
   invoice_date: string;
   buyer: string;
   buyer_tax_number: string;
@@ -16,7 +17,7 @@ export interface InvoiceInfo {
 export interface FileInvoiceProcessedEvent {
   file_path: string;
   file_name: string;
-  status: 'success' | 'warning' | 'failed';
+  status: string;
   timestamp: number;
   invoice_info?: InvoiceInfo;
   message?: string;
