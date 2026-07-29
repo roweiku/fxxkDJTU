@@ -16,10 +16,18 @@ export interface ModelConfig {
 }
 
 export interface TransactionInfo {
-  strategy_type?: 'taobao' | 'alipay';
+  strategy_type?:
+    | 'taobao'
+    | 'xianyu'
+    | 'alipay'
+    | 'jd'
+    | 'bank'
+    | 'meituan'
+    | 'meituan_pay';
   amount: number | null;
   order_id: string | null;
   pay_time: string | null;
+  merchant?: string | null;
 }
 
 export interface FileProcessedEvent {

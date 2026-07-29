@@ -1,7 +1,7 @@
 import { readFile } from '@tauri-apps/plugin-fs';
 import { Template, checkTemplate } from '@pdfme/common';
 import type { MatchGroup } from '@/types/match';
-import { flattenStampAnnotations } from './flattenAnnotations';
+import { flattenStampAnnotations, repairMalformedUlcHeader } from './flattenAnnotations';
 
 /** 可用模板 key */
 type TemplateKey = '1pdf1img' | '1pdf2img';
@@ -15,23 +15,23 @@ interface FieldMapping {
   pageIndex?: number;
   /** ocrEntry 索引 */
   ocrEntryIndex?: number;
-  /** 'taobao' | 'alipay' */
-  ocrSource?: 'taobao' | 'alipay';
+  /** 电商订单截图或支付明细截图 */
+  ocrSource?: 'order' | 'payment';
 }
 
 /** 每个模板 key 对应的字段映射 */
 const TEMPLATE_FIELD_MAPS: Record<TemplateKey, FieldMapping[]> = {
   '1pdf1img': [
     { fieldName: 'field1', type: 'pdf', pageIndex: 0 },
-    { fieldName: 'field2', type: 'image', ocrEntryIndex: 0, ocrSource: 'taobao' },
-    { fieldName: 'field3', type: 'image', ocrEntryIndex: 0, ocrSource: 'alipay' },
+    { fieldName: 'field2', type: 'image', ocrEntryIndex: 0, ocrSource: 'order' },
+    { fieldName: 'field3', type: 'image', ocrEntryIndex: 0, ocrSource: 'payment' },
   ],
   '1pdf2img': [
     { fieldName: 'field1', type: 'pdf', pageIndex: 0 },
-    { fieldName: 'field2', type: 'image', ocrEntryIndex: 0, ocrSource: 'taobao' },
-    { fieldName: 'field3', type: 'image', ocrEntryIndex: 0, ocrSource: 'alipay' },
-    { fieldName: 'field4', type: 'image', ocrEntryIndex: 1, ocrSource: 'taobao' },
-    { fieldName: 'field5', type: 'image', ocrEntryIndex: 1, ocrSource: 'alipay' },
+    { fieldName: 'field2', type: 'image', ocrEntryIndex: 0, ocrSource: 'order' },
+    { fieldName: 'field3', type: 'image', ocrEntryIndex: 0, ocrSource: 'payment' },
+    { fieldName: 'field4', type: 'image', ocrEntryIndex: 1, ocrSource: 'order' },
+    { fieldName: 'field5', type: 'image', ocrEntryIndex: 1, ocrSource: 'payment' },
   ],
 };
 
@@ -61,9 +61,11 @@ async function readFileAsDataUri(filePath: string): Promise<string> {
   let mime: string;
   if (ext === 'pdf') {
     mime = 'application/pdf';
+    const originalPdf = new Uint8Array(bytes);
     try {
-      bytes = await flattenStampAnnotations(new Uint8Array(bytes));
+      bytes = await flattenStampAnnotations(originalPdf);
     } catch (e) {
+      bytes = repairMalformedUlcHeader(originalPdf);
       console.warn('[pdfGenerator] flattenStampAnnotations failed, fallback to original PDF:', e);
     }
   }
@@ -112,7 +114,7 @@ async function buildInputForGroup(
     } else if (m.type === 'image') {
       const entry = group.ocrEntries[m.ocrEntryIndex ?? 0];
       if (!entry) continue;
-      const item = m.ocrSource === 'taobao' ? entry.taobao : entry.alipay;
+      const item = m.ocrSource === 'order' ? entry.order : entry.payment;
       if (item?.filePath) {
         input[m.fieldName] = await readFileAsDataUri(item.filePath);
       }

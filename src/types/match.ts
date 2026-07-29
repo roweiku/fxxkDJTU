@@ -1,7 +1,17 @@
 // 匹配工作流类型定义
 
 /** 结果来源类型 */
-export type ReviewSource = 'taobao' | 'alipay' | 'invoice';
+export type ReviewSource =
+  | 'taobao'
+  | 'xianyu'
+  | 'alipay'
+  | 'jd'
+  | 'bank'
+  | 'meituan'
+  | 'meituan_pay'
+  | 'invoice';
+export type OrderSource = 'taobao' | 'xianyu' | 'jd' | 'meituan';
+export type PaymentSource = 'alipay' | 'bank' | 'meituan_pay';
 
 /** 审核状态 */
 export type ReviewStatus = 'success' | 'check' | 'error';
@@ -24,7 +34,7 @@ export interface ReviewItem {
   fileName: string;
   /** 金额 */
   amount: number | null;
-  /** 订单号（淘宝/支付宝共享28位交易号） */
+  /** 电商订单号或淘宝/支付宝共享交易号 */
   orderId: string | null;
   /** 支付时间 */
   payTime: string | null;
@@ -32,7 +42,7 @@ export interface ReviewItem {
   invoiceNumber: string | null;
   /** 开票日期（仅 invoice） */
   invoiceDate: string | null;
-  /** 销售方（仅 invoice） */
+  /** 订单商家或发票销售方 */
   seller: string | null;
   /** 购买方（仅 invoice） */
   buyer: string | null;
@@ -44,10 +54,10 @@ export interface ReviewItem {
   pageCount: number | null;
 }
 
-/** OCR 子条目（淘宝+支付宝配对） */
+/** OCR 子条目（电商订单 + 支付明细配对） */
 export interface OcrEntry {
-  taobao: ReviewItem | null;
-  alipay: ReviewItem | null;
+  order: ReviewItem | null;
+  payment: ReviewItem | null;
   amount: number | null;
   orderId: string | null;
   payTime: string | null;

@@ -15,6 +15,7 @@ pub enum InvoiceError {
 #[derive(Debug, Clone, Serialize)]
 pub struct InvoiceInfo {
     pub invoice_number: String,
+    pub order_id: String,
     pub invoice_date: String,
     pub buyer: String,
     pub buyer_tax_number: String,
@@ -30,6 +31,7 @@ impl Default for InvoiceInfo {
     fn default() -> Self {
         Self {
             invoice_number: String::new(),
+            order_id: String::new(),
             invoice_date: String::new(),
             buyer: String::new(),
             buyer_tax_number: String::new(),
@@ -47,14 +49,15 @@ impl InvoiceInfo {
     /// 验证发票信息完整性，返回 (status, message)
     pub fn validate(&self) -> (String, Option<String>) {
         let mut missing = Vec::new();
-        if self.invoice_number.is_empty() { missing.push("发票号码"); }
-        if self.invoice_date.is_empty() { missing.push("开票日期"); }
-        // if self.buyer.is_empty() { missing.push("购买方"); }
-        // if self.buyer_tax_number.is_empty() { missing.push("购买方税号"); }
-        // if self.seller.is_empty() { missing.push("销售方"); }
-        // if self.seller_tax_number.is_empty() { missing.push("销售方税号"); }
-        // if self.item_content.is_empty() { missing.push("项目内容"); }
-        if self.amount.is_empty() { missing.push("金额"); }
+        if self.invoice_number.is_empty() {
+            missing.push("发票号码");
+        }
+        if self.invoice_date.is_empty() {
+            missing.push("开票日期");
+        }
+        if self.amount.is_empty() {
+            missing.push("金额");
+        }
 
         if missing.is_empty() {
             return ("extract_invoice::success".to_string(), None);
@@ -68,10 +71,7 @@ impl InvoiceInfo {
 }
 
 /// 从PDF发票中提取信息
-fn parse_invoice(
-    text: &str, 
-    buyer_keyword: Option<&str>
-) -> InvoiceInfo {
+fn parse_invoice(text: &str, buyer_keyword: Option<&str>) -> InvoiceInfo {
     let buyer_keyword = buyer_keyword.unwrap_or("");
     let mut info = InvoiceInfo::default();
 
@@ -81,16 +81,33 @@ fn parse_invoice(
         info.invoice_number = caps.get(1).unwrap().as_str().to_string();
     }
 
+    // 京东电子发票备注区包含 16 位订单号，也兼容其他平台较长的订单号。
+    let order_regex = Regex::new(r"订单号\s*[:：]\s*(\d{12,28})\b").unwrap();
+    if let Some(caps) = order_regex.captures(text) {
+        info.order_id = caps.get(1).unwrap().as_str().to_string();
+    }
+
     // 提取开票日期
     let date_regex = Regex::new(r"(\d{4})年(\d{1,2})月(\d{1,2})日").unwrap();
     if let Some(caps) = date_regex.captures(text) {
         let year = caps.get(1).unwrap().as_str();
-        let month = format!("{:02}", caps.get(2).unwrap().as_str().parse::<u32>().unwrap_or(0));
-        let day = format!("{:02}", caps.get(3).unwrap().as_str().parse::<u32>().unwrap_or(0));
+        let month = format!(
+            "{:02}",
+            caps.get(2).unwrap().as_str().parse::<u32>().unwrap_or(0)
+        );
+        let day = format!(
+            "{:02}",
+            caps.get(3).unwrap().as_str().parse::<u32>().unwrap_or(0)
+        );
         info.invoice_date = format!("{}-{}-{}", year, month, day);
     }
 
-    // 提取税号（18位，可能包含字母）
+    let combined_tax_regex = Regex::new(r"\b([0-9A-Z]{18})([0-9A-Z]{18})\b").unwrap();
+    if let Some(caps) = combined_tax_regex.captures(text) {
+        info.seller_tax_number = caps.get(1).unwrap().as_str().to_string();
+        info.buyer_tax_number = caps.get(2).unwrap().as_str().to_string();
+    }
+
     let tax_regex = Regex::new(r"\b[0-9A-Z]{18}\b").unwrap();
     let tax_numbers: Vec<String> = tax_regex
         .find_iter(text)
@@ -102,11 +119,31 @@ fn parse_invoice(
         .filter(|t| !(t.chars().all(|c| c.is_ascii_digit()) && t.len() == 20))
         .collect();
 
-    if valid_taxes.len() >= 1 {
+    if info.buyer_tax_number.is_empty() && !valid_taxes.is_empty() {
         info.buyer_tax_number = valid_taxes[0].clone();
     }
-    if valid_taxes.len() >= 2 {
+    if info.seller_tax_number.is_empty() && valid_taxes.len() >= 2 {
         info.seller_tax_number = valid_taxes[1].clone();
+    }
+
+    // 数电票通常把购买方、销售方排在同一行。优先按标签提取，避免把整行
+    // （两个名称拼在一起）误认为商家名称。
+    let party_regex =
+        Regex::new(r"(?m)名\s*称\s*[:：]\s*(.+?)\s{2,}售\s*名\s*称\s*[:：]\s*(.+?)\s*$").unwrap();
+    if let Some(caps) = party_regex.captures(text) {
+        info.buyer = caps.get(1).unwrap().as_str().trim().to_string();
+        info.seller = caps.get(2).unwrap().as_str().trim().to_string();
+    }
+
+    if info.buyer.is_empty() || info.seller.is_empty() {
+        let combined_party_regex = Regex::new(
+            r"(?m)^\s*(.+?(?:有限责任公司|股份有限公司|有限公司|商行|商店))(.+?大学)\s*$",
+        )
+        .unwrap();
+        if let Some(caps) = combined_party_regex.captures(text) {
+            info.seller = caps.get(1).unwrap().as_str().trim().to_string();
+            info.buyer = caps.get(2).unwrap().as_str().trim().to_string();
+        }
     }
 
     // 提取项目内容
@@ -126,10 +163,26 @@ fn parse_invoice(
 
     // 销售方关键词
     let seller_keywords = vec![
-        "有限公司", "股份有限公司", "科技", "网络", "文化", "婴童",
-        "贸易", "酒店", "饭店", "娱乐", "百货", "商店",
-        "餐饮店", "饮食店", "加油站", "石油化工",
-        "商行", "电子商务商行", "大学", "部"
+        "有限公司",
+        "股份有限公司",
+        "科技",
+        "网络",
+        "文化",
+        "婴童",
+        "贸易",
+        "酒店",
+        "饭店",
+        "娱乐",
+        "百货",
+        "商店",
+        "餐饮店",
+        "饮食店",
+        "加油站",
+        "石油化工",
+        "商行",
+        "电子商务商行",
+        "大学",
+        "部",
     ];
 
     // 提取所有可能的销售方名称
@@ -138,14 +191,15 @@ fn parse_invoice(
 
     for line in lines {
         let line = line.trim();
-        if line.len() < 5 || line.len() > 60 {
+        let char_count = line.chars().count();
+        if char_count < 5 || char_count > 60 {
             continue;
         }
 
         // 检查排除模式
-        let should_exclude = exclude_patterns.iter().any(|pattern| {
-            Regex::new(pattern).unwrap().is_match(line)
-        });
+        let should_exclude = exclude_patterns
+            .iter()
+            .any(|pattern| Regex::new(pattern).unwrap().is_match(line));
         if should_exclude {
             continue;
         }
@@ -160,10 +214,8 @@ fn parse_invoice(
         }
     }
 
-    // println!("{:?}", all_sellers);
-
     // 识别购买方（根据传入的关键词匹配）
-    if !buyer_keyword.is_empty() {
+    if info.buyer.is_empty() && !buyer_keyword.is_empty() {
         for seller in &all_sellers {
             if seller.contains(buyer_keyword) {
                 info.buyer = seller.clone();
@@ -176,10 +228,12 @@ fn parse_invoice(
     }
 
     // 销售方是第二个不同的商家
-    for seller in &all_sellers {
-        if seller != &info.buyer {
-            info.seller = seller.clone();
-            break;
+    if info.seller.is_empty() {
+        for seller in &all_sellers {
+            if seller != &info.buyer {
+                info.seller = seller.clone();
+                break;
+            }
         }
     }
 
@@ -190,18 +244,40 @@ fn parse_invoice(
             let raw_start = idx.saturating_sub(100);
             let raw_end = (idx + 100).min(text.len());
             // 与 UTF-8 字符边界对齐避免 tokio-runtime-worker 线程恐慌
-            let start = (0..=raw_start).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
-            let end = (raw_end..=text.len()).find(|&i| text.is_char_boundary(i)).unwrap_or(text.len());
+            let start = (0..=raw_start)
+                .rev()
+                .find(|&i| text.is_char_boundary(i))
+                .unwrap_or(0);
+            let end = (raw_end..=text.len())
+                .find(|&i| text.is_char_boundary(i))
+                .unwrap_or(text.len());
             let context = &text[start..end];
-            
-            let keywords = vec!["店", "商行", "有限公司", "商贸", "科技", "贸易", "酒店", "饭店", "餐饮"];
+
+            let keywords = vec![
+                "店",
+                "商行",
+                "有限公司",
+                "商贸",
+                "科技",
+                "贸易",
+                "酒店",
+                "饭店",
+                "餐饮",
+            ];
             for kw in keywords {
                 let escaped_kw = regex::escape(kw);
                 let pattern = format!(r"([^\s\n]+{}[^\s\n]*)", escaped_kw);
                 if let Ok(kw_regex) = Regex::new(&pattern) {
                     if let Some(caps) = kw_regex.captures(context) {
-                        let seller = caps.get(1).unwrap().as_str()
-                            .trim_matches(|c: char| c == '*' || c == '、' || c == '。' || c == '.' || c == '\n' || c == '\t' || c == '\r');
+                        let seller = caps.get(1).unwrap().as_str().trim_matches(|c: char| {
+                            c == '*'
+                                || c == '、'
+                                || c == '。'
+                                || c == '.'
+                                || c == '\n'
+                                || c == '\t'
+                                || c == '\r'
+                        });
                         if seller != info.buyer && seller.len() > 4 {
                             info.seller = seller.to_string();
                             break;
@@ -212,18 +288,32 @@ fn parse_invoice(
         }
     }
 
-    // 提取金额 - 优先找"圆整"后的金额
-    let yuanzheng_regex = Regex::new(r"圆整\s*[¥￥]?\s*([\d,]+\.?\d*)").unwrap();
-    if let Some(caps) = yuanzheng_regex.captures(text) {
-        info.amount = caps.get(1).unwrap().as_str().replace(',', "");
+    // 提取金额 - 优先使用明确标记的价税合计（小写）。
+    let lowercase_total_regex =
+        Regex::new(r"[（(]小写[）)]\s*[¥￥]\s*([\d,，]+(?:\.\d+)?)").unwrap();
+    let yuanzheng_regex = Regex::new(r"圆整\s*[¥￥]?\s*([\d,，]+\.?\d*)").unwrap();
+    if let Some(caps) = lowercase_total_regex.captures(text) {
+        info.amount = caps
+            .get(1)
+            .unwrap()
+            .as_str()
+            .replace(',', "")
+            .replace('，', "");
+    } else if let Some(caps) = yuanzheng_regex.captures(text) {
+        info.amount = caps
+            .get(1)
+            .unwrap()
+            .as_str()
+            .replace(',', "")
+            .replace('，', "");
     } else {
         // 找所有¥后的金额，取最大的（价税合计通常是最大的）
-        let amount_regex = Regex::new(r"[¥￥]\s*([\d,]+\.?\d*)").unwrap();
+        let amount_regex = Regex::new(r"[¥￥]\s*([\d,，]+\.?\d*)").unwrap();
         let mut amounts_float: Vec<(f64, String)> = Vec::new();
 
         for caps in amount_regex.captures_iter(text) {
             if let Some(amt_str) = caps.get(1) {
-                let amt_str_clean = amt_str.as_str().replace(',', "");
+                let amt_str_clean = amt_str.as_str().replace(',', "").replace('，', "");
                 if let Ok(amt) = amt_str_clean.parse::<f64>() {
                     if amt > 0.0 && amt < 10000000.0 {
                         amounts_float.push((amt, amt_str.as_str().to_string()));
@@ -233,9 +323,11 @@ fn parse_invoice(
         }
 
         if !amounts_float.is_empty() {
-            let max_amount = amounts_float.iter().max_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            let max_amount = amounts_float
+                .iter()
+                .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
             if let Some(max) = max_amount {
-                info.amount = max.1.replace(',', "");
+                info.amount = max.1.replace(',', "").replace('，', "");
             }
         }
     }
