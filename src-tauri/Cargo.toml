@@ -1,6 +1,6 @@
 [package]
 name = "fxxkdjtu"
-version = "0.1.12"
+version = "0.1.13"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -49,5 +49,4 @@ opt-level = 3  # 图像处理库也优化
 strip = true
 lto = "thin"
 codegen-units = 1
-
 
